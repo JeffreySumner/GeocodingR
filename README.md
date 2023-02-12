@@ -1,1 +1,6 @@
 # GeocodingR
+This repository is meant to showcase web scraping, geocoding and mapping capabilities of R. The data we use in this repository was scraped in 2019 from Shoe Carnival and DSW Shoes. The techniques used were valid then but in reality, websites change over time and there are likely differences in the tags associated with each store's website. The process likely needs to be updated to account for those changes, assuming they occurred.
+
+With that said, the /scripts contains the R Markdown document used to generate the output file in /results. The resulting file goes in depth on data gathering, data cleansing, geocoding and mapping capabilities of R. This exercise was meant to compare store locations of Shoe Carnival stores versus one of their main competitors, DSW Shoes. From the analysis you will see that Shoe Carnival, at the time, was very heavily located in the eastern half of the United States while DSW did have store locations spread across the western half of the United States.
+
+This was a preliminary analysis and could be improved in many different ways given the advancements of R packages over the last few years. Please reach out with any questions or for any discussion!
