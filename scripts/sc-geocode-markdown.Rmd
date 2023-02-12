@@ -1,0 +1,330 @@
+---
+title: "Shoe Carnival Store Locations"
+author: "Jeffrey Sumner"
+date: "March 14, 2019"
+output: pdf_document
+---
+
+# Introduction
+
+This RMarkdown document will take you through a few examples of R capabilities as well as showcase some of my programming skills. We will break this into three different sections: (1) Web Scraping, (2) Geocoding and (3) Location Analysis. Each section will have a brief demo of a chunk of R code and an explanation behind each piece.
+
+Let's get started!
+
+# Methodology
+
+We will be scraping the Shoe Carnival website:\
+[**https://stores.shoecarnival.com/**](https://stores.shoecarnival.com/){.uri}\
+We use **rvest** to dig into the webpage and pull out key tags. From there we use **ggmap** to geocode the scraped locations. **ggmap** will also be used to create all map visuals. **ggmap** (@Article) requires a Google Cloud API key which can be obtained for free BUT billing must be enabled. There is a \$200 credit each month which equates to roughly 40,000 locations geocoded.
+
+## (1) Web Scraping
+
+To scrape the data we need:\
+1) Our base URL: [**https://stores.shoecarnival.com/**](https://stores.shoecarnival.com/){.uri}\
+2) Find all States via the URL above and abbreviate the full state name\
+3) With the abbreviated state name we can access the following example URL: [**https://stores.shoecarnival.com/al/**](https://stores.shoecarnival.com/al/){.uri}\
+4) Once we access this URL we need ALL cities associated with Shoe Carnival; the format of the city url is as follows:\
+[**https://stores.shoecarnival.com/ar/northlittlerock/**](https://stores.shoecarnival.com/ar/northlittlerock/){.uri}\
+5) Once at the webpage for each city via the calculated URL, we need to extract the address. The css tag can be obtained using the Google Chrome extension **selector gadget** or by inspecting the source code.
+
+After working through the steps above and performing some minor cleaning techniques to the data, I was able to create a nice dataset of Shoe Carnival addresses.
+
+Let's see how it all works and put it into action ourselves!
+
+### Required R Packages
+
+```{r eval = TRUE, warning = FALSE, message = FALSE}
+
+# likely the most useful package in all of R
+# suite of packages for data manipulation, visualization, etc.
+# install.packages("tidyverse") # run if tidyverse is not installed already
+library(tidyverse)
+# rvest is the package that we will use to scrape the web data
+library(rvest)
+# openintro will be used to conver state names to abbreviations for the URL
+# install.packages("openintro") # run if openintro is not installed already
+library(openintro)
+```
+
+Great, we have our packages loaded in via library() and now we are ready to get to the good parts.
+
+### Scraping the Data
+
+As mentioned above in the steps, we first need to figure out each state Shoe Carnival is located in to adjust the URL code. Again, we will be use: [**https://stores.shoecarnival.com/**](https://stores.shoecarnival.com/){.uri} to get this information. At the bottom of the URL there is a full list of states. We will be extracting each.
+
+#### Getting the States
+
+```{r eval = FALSE}
+
+sc.url <- read_html("https://stores.shoecarnival.com/")
+sc.node <- ".map-list-item"
+sc.states <- sc.url %>%
+  html_nodes(sc.node) %>%
+  html_text()
+```
+
+```{r eval = TRUE}
+load("sc-geocode-data.RData")
+# View the initial data
+sc.states
+```
+
+This is looking good so far but definitely needs cleaning. We will clean it easily with the following code:
+
+```{r eval = FALSE}
+sc.states.clean <- sc.states %>%
+  str_replace("\r","") %>% # begin removing new line tag
+  str_replace("\n","") %>% # can be combined with \r
+  trimws() %>% # remove extra white space
+  unique() # remove duplicated states
+# PR is removed only because openintro cannot convert it
+# I chose to filter instead of using case_when to create
+# the lower case pr value
+sc.states.clean <- sc.states.clean %>%
+  data.frame(stringsAsFactors = F) %>%
+  filter(!. %in% "Puerto Rico") %>%
+  mutate(Short = tolower(state2abbr(.)))
+
+names(sc.states.clean) <- c("Long","Short")
+```
+
+```{r eval = TRUE}
+load("sc-geocode-data.RData")
+head(sc.states.clean)
+```
+
+Great! Already a pretty decent amount of work but it yields exactly what we need! Now for the next step in this scraping analysis - getting the cities.
+
+#### Getting the Cities
+
+```{r eval = FALSE}
+sc.cities <- data.frame(stringsAsFactors = F)
+for(i in sc.states.clean$Short){
+  # base URL
+  sc.url <- "https://stores.shoecarnival.com/"
+  # adding states to the URL
+  sc.url.state <- read_html(paste0(sc.url,i))
+  # css code to access city info
+  sc.node <- ".map-list-item"
+  temp.data <- sc.url.state %>%
+    html_nodes(sc.node) %>%
+    html_text()
+  # the data is messy just as before
+  # we clean it the same way
+  temp.data <- temp.data %>%
+    str_replace("\r","") %>%
+    str_replace("\n","") %>%
+    trimws() %>%
+    unique()
+  # adding the city using the Shoe Carnival format
+  # removing any spaces from city names 
+  # simple prep for the URL
+  temp.data <- temp.data %>%
+    data.frame(city.full = .,stringsAsFactors = F) %>%
+    mutate(city.url = tolower(
+      str_replace(city.full," ","")
+      ), state = i)
+  
+  # bring it altogether
+  sc.cities <- rbind(sc.cities,temp.data)
+}
+```
+
+Now we have the state and each city for those states. The next step is to create our final URL:
+
+```{r eval = FALSE}
+sc.cities <- sc.cities %>%
+  mutate(full.url = paste("https://stores.shoecarnival.com",
+                          state,
+                          city.url,
+                          sep = "/")
+         )
+```
+
+```{r eval = TRUE}
+load("sc-geocode-data.RData")
+head(sc.cities)
+
+```
+
+Looking good! Now, we need those addresses! We will need to loop through the newly created URL's yet again.
+
+#### Getting the Addresses
+
+```{r eval = FALSE}
+sc.address <- data.frame(stringsAsFactors = F)
+for(i in sc.cities$full.url){
+  sc.url <- read_html(i)
+  # the css tag for address
+  sc.node <- ".address"
+  temp.data <- sc.url %>%
+    html_nodes(sc.node) %>%
+    html_text()
+  # additional data cleaning
+  temp.data <- temp.data %>%
+    str_replace("\r","") %>%
+    str_replace("\n","") %>%
+    trimws() %>%
+    unique() %>%
+    data.frame(stringsAsFactors = F)
+  
+  # bring it altogether
+  sc.address <- rbind(sc.address,temp.data)
+  
+}
+
+sc.address <- sc.address %>%
+  unique()
+
+```
+
+```{r eval = TRUE}
+load("sc-geocode-data.RData")
+head(sc.address)
+```
+
+They always say that the hardest part is getting the data. While that may be true, luckily for us, we now have all the data that we need to geocode.
+
+###Geocoding the Addresses
+
+This is a relatively straightforward section. The code required to geocode is very minimal, yet powerful. Here we will use my google API key to access their geocoder.
+
+```{r eval = FALSE}
+
+# devtools::install_github("dkahle/ggmap") # run this to install ggmap
+# library(ggmap)
+
+# add your api key (must enable billing -
+# 40k free geocodes per month)
+register_google(key = "key_id")
+
+# mutate_geocode appends the geocoded address
+# to the dataframe
+names(sc.address) <- "Address"
+sc.geocodes <- sc.address %>%
+  mutate_geocode(Address)
+
+
+```
+
+Geocoding in R is as simple as that. The drawback is the limitations that Google has now placed on the API. I once was able to geocode as much as I wanted whenever I wanted. BUT the credit each month does allow up to 40,000 locations to be geocoded and this is plenty for me but could be problematic for a much larger corporation.
+
+Nevertheless, let's view this data again for completeness. Particularly, I want to examine the Evansville Shoe Carnival locations
+
+```{r}
+load("sc-geocode-data.RData")
+head(sc.geocodes %>%
+       filter(grepl("Evansville, IN",Address)
+              )
+     )
+```
+
+Excellent. The data appears to be correct and we can verify this with Google.\
+Typing the first set of coordinates into Google Maps gives us this:\
+[**https://www.google.com/maps/place/37%C2%B058'48.8%22N+87%C2%B037'29.9%22W/\@37.9802211,-87.6255072,19z/data=!3m1!4b1!4m5!3m4!1s0x0:0x0!8m2!3d37.98022!4d-87.62496**](https://www.google.com/maps/place/37%C2%B058'48.8%22N+87%C2%B037'29.9%22W/@37.9802211,-87.6255072,19z/data=!3m1!4b1!4m5!3m4!1s0x0:0x0!8m2!3d37.98022!4d-87.62496){.uri}\
+and with the second set we get this:\
+[**https://www.google.com/maps/place/37%C2%B059'02.1%22N+87%C2%B029'25.4%22W/\@37.9839142,-87.4925887,17z/data=!3m1!4b1!4m5!3m4!1s0x0:0x0!8m2!3d37.98391!4d-87.4904**](https://www.google.com/maps/place/37%C2%B059'02.1%22N+87%C2%B029'25.4%22W/@37.9839142,-87.4925887,17z/data=!3m1!4b1!4m5!3m4!1s0x0:0x0!8m2!3d37.98391!4d-87.4904){.uri}
+
+The geocoder gives us a rooftop level of accuracy for each of the Shoe Carnival locations. The points may not be 100% exact but they are VERY close.
+
+###Wrap-Up with Mapping in R! We have scraped the data and geocoded it. Now would be a great time to visualize some of the results. Luckily for us, we don't need to go too far! **ggmap** not only geocodes but it maps data as well. While there are packages that deal with shapefiles and layers in R, for this exercise we want to create two simple, but complete, maps. One with the points but another to show more of the distribution of the Shoe Carnival locations.
+
+Let's start with the points map first:
+
+```{r}
+# simple map with no layer
+load("sc-geocode-data.RData")
+library(ggmap)
+sc.geocodes %>%
+  ggplot(aes(x = lon,y = lat)) + geom_point()
+```
+
+Yikes, that is pretty ugly. We can do better! Below we will create a Google Maps API Call.
+
+```{r, eval = FALSE}
+# get a Google Maps layer of the US and adjust some of the styling
+map <- get_googlemap(location="united states",
+             source='google',
+             zoom = 4,
+             style=c(feature="administrative.country",element="labels",visibility="off")
+             )
+```
+
+Now that we have a base layer for our map stored we can add the points and a title.
+
+```{r warning=FALSE,message=FALSE,eval = FALSE}
+points.map.sc <- ggmap(map) +
+  geom_point(data = sc.geocodes,aes(x = lon,y = lat)) +
+  ggtitle("Shoe Carnival US Store Locations")
+```
+
+```{r eval = TRUE}
+load("sc-geocode-data.RData")
+points.map.sc
+```
+
+This looks significantly better! BUT can it be improved? There are quite a few points... Maybe we should look at the density of the map? Get an idea of how the Shoe Carnival locations are dispersed throughout the US. Of course we can tell that a majority appear to be on the Central/East Coast. What else can we see?
+
+```{r warning=FALSE,message=FALSE,eval = FALSE}
+density.map.sc <- ggmap(map, extent = "panel", maprange=FALSE) +
+  geom_density2d(data = sc.geocodes,aes(x = lon, y = lat)) +
+  stat_density2d(data = sc.geocodes,aes(x = lon, y = lat, fill = ..level.., alpha = ..level..),
+                 size = 0.01, geom = 'point') +
+  scale_fill_gradient(low = "green", high = "red") +
+  scale_alpha(range = c(0.00, 0.25), guide = FALSE) +
+  theme(legend.position = "none", axis.title = element_blank(), text = element_text(size = 12))+
+  ggtitle("Shoe Carnival Store Location Dispersion")+
+  theme(plot.title = element_text(size=10))
+```
+
+```{r eval = TRUE}
+load("sc-geocode-data.RData")
+density.map.sc
+```
+
+Beautiful. This really brings out the spread of the locations. This is only scratching the surface of the R GIS capabilities. But it is a very good start.
+
+###Taking Action
+
+After working through all of this there is still the lingering question as to what can be done with this information. How does this lead to something actionable? Well, we know that Payless is closing doors. Are there locations that Shoe Carnival could target to try to gain some of the Payless consumer? What demographics does Shoe Carnival currently excel with and are there areas out west that could be targeted?
+
+I did want to examine the Payless store locations but their website was not as easily accessible in regards to store locations. Luckily I was able to apply an almost identical scraping process to DSW stores. I will spare all of the scraping details but the final maps that I was able to produce using DSW points.
+
+```{r warning=FALSE,message=FALSE,eval = FALSE}
+
+points.map.dsw <- ggmap(map) +
+  geom_point(data = dsw.geocodes,aes(x = lon,y = lat)) +
+  ggtitle("DSW US Store Locations")
+```
+
+```{r eval = TRUE}
+load("sc-geocode-data.RData")
+points.map.dsw
+```
+
+```{r warning=FALSE,message=FALSE,eval = FALSE}
+density.map.dsw <- ggmap(map, extent = "panel", maprange=FALSE) +
+  geom_density2d(data = dsw.geocodes,aes(x = lon, y = lat)) +
+  stat_density2d(data = dsw.geocodes,aes(x = lon, y = lat, fill = ..level.., alpha = ..level..),
+                 size = 0.01, geom = 'point') +
+  scale_fill_gradient(low = "green", high = "red") +
+  scale_alpha(range = c(0.00, 0.25), guide = FALSE) +
+  theme(legend.position = "none", axis.title = element_blank(), text = element_text(size = 12))+
+  ggtitle("DSW Store Location Dispersion")+
+  theme(plot.title = element_text(size=10))
+```
+
+```{r eval = TRUE}
+load("sc-geocode-data.RData")
+density.map.dsw
+```
+
+These maps alone tell a very different story than that of Shoe Carnival. DSW is heavily penetrated in the Northeast as well as a few hot spots on the West Coast. This is perhaps something worth considering in the future for store expansions. There does appear to be plenty of opportunity to hit high foot traffic and volume areas on the West Coast.
+
+There are many different routes to take and other visuals that may help to better explore the data. This is certainly a great start and something to build off of in the future!
+
+###Thanks! Thanks for working through this and I hope it has demonstrated some of the capabilities that I can bring to the company.
+
+# Citations
+
+D. Kahle and H. Wickham. ggmap: Spatial Visualization with ggplot2. The R Journal, 5(1), 144-161. URL [**http://journal.r-project.org/archive/2013-1/kahle-wickham.pdf**](http://journal.r-project.org/archive/2013-1/kahle-wickham.pdf){.uri}
